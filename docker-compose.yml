@@ -1,4 +1,8 @@
+version: "3.7"
+
 networks:
+  dokploy-network:
+    external: true
   frontend:
   backend:
 
@@ -8,13 +12,15 @@ volumes:
 
 x-op-restart-policy: &restart_policy
   restart: unless-stopped
+
 x-op-image: &image
   image: openproject/openproject:${TAG:-16-slim}
+
 x-op-app: &app
   <<: [*image, *restart_policy]
   environment:
     OPENPROJECT_HTTPS: "${OPENPROJECT_HTTPS:-true}"
-    OPENPROJECT_HOST__NAME: "${OPENPROJECT_HOST__NAME:-localhost:8080}"
+    OPENPROJECT_HOST__NAME: "${OPENPROJECT_HOST__NAME:-openproject.tudominio.com}"
     OPENPROJECT_HSTS: "${OPENPROJECT_HSTS:-true}"
     RAILS_CACHE_STORE: "memcache"
     OPENPROJECT_CACHE__MEMCACHE__SERVER: "cache:11211"
@@ -22,7 +28,6 @@ x-op-app: &app
     DATABASE_URL: "${DATABASE_URL:-postgres://postgres:p4ssw0rd@db/openproject?pool=20&encoding=unicode&reconnect=true}"
     RAILS_MIN_THREADS: ${RAILS_MIN_THREADS:-4}
     RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-16}
-    # set to true to enable the email receiving feature. See ./docker/cron for more options
     IMAP_ENABLED: "${IMAP_ENABLED:-false}"
   volumes:
     - "${OPDATA:-opdata}:/var/openproject/assets"
@@ -46,31 +51,22 @@ services:
     networks:
       - backend
 
-  proxy:
-    build:
-      context: ./proxy
-      args:
-        APP_HOST: web
-    image: openproject/proxy
-    <<: *restart_policy
-    ports:
-      - "${PORT:-8080}:80"
-    depends_on:
-      - web
-    networks:
-      - frontend
-
   web:
     <<: *app
     command: "./docker/prod/web"
     networks:
       - frontend
       - backend
+      - dokploy-network
     depends_on:
       - db
       - cache
       - seeder
     labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.openproject.rule=Host(`${OPENPROJECT_HOST__NAME}`)"
+      - "traefik.http.routers.openproject.entrypoints=web"
+      - "traefik.http.services.openproject.loadbalancer.server.port=8080"
       - autoheal=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080${OPENPROJECT_RAILS__RELATIVE__URL__ROOT:-}/health_checks/default"]
@@ -78,15 +74,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 30s
-
-  autoheal:
-    image: willfarrell/autoheal:1.2.0
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
-    environment:
-      AUTOHEAL_CONTAINER_LABEL: autoheal
-      AUTOHEAL_START_PERIOD: 600
-      AUTOHEAL_INTERVAL: 30
 
   worker:
     <<: *app
@@ -114,3 +101,12 @@ services:
     restart: on-failure
     networks:
       - backend
+
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_START_PERIOD: 600
+      AUTOHEAL_INTERVAL: 30
