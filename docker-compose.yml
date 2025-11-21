@@ -94,5 +94,6 @@ services:
     <<: *app
     command: "./docker/prod/seeder"
     restart: on-failure
+    user: root
     networks:
       - backend
